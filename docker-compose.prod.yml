@@ -1,0 +1,63 @@
+# Mobile Analyzer - Docker Setup with Nginx Reverse Proxy
+version: '3.8'
+
+services:
+  # Backend API Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mobai-backend
+    restart: unless-stopped
+    volumes:
+      - mobai-data:/app/data
+      - mobai-uploads:/app/uploads
+    environment:
+      - DATABASE_PATH=/app/data/mobile_analyzer.db
+      - UPLOAD_DIR=/app/uploads
+      - DATA_DIR=/app/data
+    networks:
+      - mobai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend Service
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mobai-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - mobai-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: mobai-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - mobai-network
+
+networks:
+  mobai-network:
+    driver: bridge
+
+volumes:
+  mobai-data:
+  mobai-uploads:

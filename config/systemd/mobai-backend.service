@@ -1,0 +1,36 @@
+[Unit]
+Description=MobAI Backend - Mobile Security Analyzer API
+Documentation=https://github.com/UmutBarisBASAK/mobile-security-analyzer
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/mobai/backend
+
+# Environment dosyasi
+EnvironmentFile=/opt/mobai/.env
+
+# Virtual environment
+Environment="PATH=/opt/mobai/backend/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="VIRTUAL_ENV=/opt/mobai/backend/venv"
+
+# Calistirilacak komut
+ExecStart=/opt/mobai/backend/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+
+# Restart politikasi
+Restart=always
+RestartSec=5
+
+# Guvenlik ayarlari
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Loglama
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mobai-backend
+
+[Install]
+WantedBy=multi-user.target

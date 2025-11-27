@@ -1,0 +1,20 @@
+# MobAI Installer Dependencies
+# Bu dosya kurulum araci icin gereken Python paketlerini icerir.
+
+# Terminal UI
+rich>=13.0.0            # Renkli terminal ciktisi, progress bar, tablolar
+
+# CLI Framework
+click>=8.0.0            # Komut satiri argument parsing
+
+# Interactive Prompts
+questionary>=2.0.0      # Interaktif sorular ve secimler
+
+# HTTP Client
+requests>=2.28.0        # Dosya indirme ve API istekleri
+
+# System Information
+psutil>=5.9.0           # Sistem bilgileri (CPU, RAM, disk)
+
+# TOML Support (Python 3.11+ icin standart, eski surumlerde gerekli)
+tomli>=2.0.0;python_version<"3.11"

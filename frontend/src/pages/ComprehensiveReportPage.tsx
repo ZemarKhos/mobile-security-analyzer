@@ -4,14 +4,19 @@
  * Uses Progressive Loading for large finding sets
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import {
-  Shield, FileText, Lock, Cpu, Code, AlertCircle, 
-  CheckCircle, ArrowLeft, RefreshCw, Bot, Loader2, Copy, Download
+  Shield, FileText, Lock, Cpu, Code, AlertCircle,
+  CheckCircle, ArrowLeft, RefreshCw, Bot, Loader2, Copy, Download,
+  FileDown, ChevronDown, Bug, Zap, Terminal, Play, Rocket, X, Settings
 } from 'lucide-react';
-import { getReport, fetchAllFindings, getReportStatus, getSecurityScan, generateFridaScript, getAIConfig } from '@/lib/api';
-import type { ReportDetail, Finding } from '@/types/api';
+import {
+  getReport, fetchAllFindings, getReportStatus, getSecurityScan, generateFridaScript, getAIConfig,
+  getExportPdfUrl, getExportCsvUrl, getExportJsonUrl, downloadExport,
+  matchReportCVEs, getReportCVEMatches, getQuickstartScript, getUltimateBypassScript, generateCustomHook
+} from '@/lib/api';
+import type { ReportDetail, Finding, CVEMatch } from '@/types/api';
 import type { SecurityScanResult, AIConfig } from '@/lib/api';
 import { formatDate, formatBytes, cn, getSeverityBgColor } from '@/lib/utils';
 import LoadingSpinner from '@/components/LoadingSpinner';
@@ -19,7 +24,7 @@ import RiskScore from '@/components/RiskScore';
 import SeverityBadge from '@/components/SeverityBadge';
 import FindingsDataTable from '@/components/FindingsDataTable';
 
-type TabId = 'dashboard' | 'manifest' | 'certificate' | 'binary' | 'code' | 'security';
+type TabId = 'dashboard' | 'manifest' | 'certificate' | 'binary' | 'code' | 'cve' | 'security';
 
 export default function ComprehensiveReportPage() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +40,11 @@ export default function ComprehensiveReportPage() {
   
   // Polling state for processing reports
   const [, setPolling] = useState(false);
+
+  // Export dropdown state
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // Load report data
   useEffect(() => {
@@ -69,6 +79,49 @@ export default function ComprehensiveReportPage() {
       loadAllFindings();
     }
   }, [activeTab, report]);
+
+  // Close export menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleExport = async (format: 'pdf' | 'csv' | 'json') => {
+    if (!id || !report) return;
+    try {
+      setExporting(true);
+      const reportId = parseInt(id);
+      let url: string;
+      let filename: string;
+
+      switch (format) {
+        case 'pdf':
+          url = getExportPdfUrl(reportId);
+          filename = `${report.app_name}_report.pdf`;
+          break;
+        case 'csv':
+          url = getExportCsvUrl(reportId);
+          filename = `${report.app_name}_findings.csv`;
+          break;
+        case 'json':
+          url = getExportJsonUrl(reportId);
+          filename = `${report.app_name}_report.json`;
+          break;
+      }
+
+      await downloadExport(url, filename);
+      setShowExportMenu(false);
+    } catch (err) {
+      console.error('Export failed:', err);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const loadReport = async (reportId: number) => {
     try {
@@ -107,6 +160,7 @@ export default function ComprehensiveReportPage() {
     { id: 'certificate', label: 'Certificate', icon: Lock },
     { id: 'binary', label: 'Binary', icon: Cpu },
     { id: 'code', label: 'Code Analysis', icon: Code },
+    { id: 'cve', label: 'CVE Matching', icon: Bug },
     { id: 'security', label: 'Security Bypass', icon: Bot },
   ];
 
@@ -144,7 +198,7 @@ export default function ComprehensiveReportPage() {
           </div>
         </div>
         
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
           {report.status === 'processing' && (
             <div className="flex items-center text-blue-600">
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -157,6 +211,58 @@ export default function ComprehensiveReportPage() {
               <span>Completed</span>
             </div>
           )}
+
+          {/* Compare Button */}
+          <Link
+            to={`/reports/${id}/compare`}
+            className="flex items-center space-x-1 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>Compare</span>
+          </Link>
+
+          {/* Export Dropdown */}
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              disabled={exporting || report.status !== 'completed'}
+              className="flex items-center space-x-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="h-4 w-4" />
+              )}
+              <span>Export</span>
+              <ChevronDown className="h-4 w-4" />
+            </button>
+
+            {showExportMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
+                <button
+                  onClick={() => handleExport('pdf')}
+                  className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  <FileText className="h-4 w-4 text-red-500" />
+                  <span>Export as PDF</span>
+                </button>
+                <button
+                  onClick={() => handleExport('csv')}
+                  className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  <FileText className="h-4 w-4 text-green-500" />
+                  <span>Export Findings (CSV)</span>
+                </button>
+                <button
+                  onClick={() => handleExport('json')}
+                  className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  <FileText className="h-4 w-4 text-blue-500" />
+                  <span>Export as JSON</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -193,14 +299,15 @@ export default function ComprehensiveReportPage() {
         {activeTab === 'certificate' && <CertificateTab report={report} />}
         {activeTab === 'binary' && <BinaryTab report={report} />}
         {activeTab === 'code' && (
-          <CodeTab 
-            report={report} 
+          <CodeTab
+            report={report}
             findings={allFindings}
             loading={findingsLoading}
             progress={findingsProgress}
           />
         )}
-        {activeTab === 'security' && <SecurityBypassTab reportId={parseInt(id!)} />}
+        {activeTab === 'cve' && <CVETab reportId={parseInt(id!)} />}
+        {activeTab === 'security' && <SecurityBypassTab reportId={parseInt(id!)} platform={report.platform} />}
       </div>
     </div>
   );
@@ -746,8 +853,165 @@ function CodeTab({ report, findings, loading, progress }: CodeTabProps) {
   );
 }
 
+// ==================== CVE Tab ====================
+function CVETab({ reportId }: { reportId: number }) {
+  const [cveMatches, setCveMatches] = useState<CVEMatch[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadExistingMatches();
+  }, [reportId]);
+
+  const loadExistingMatches = async () => {
+    try {
+      setLoading(true);
+      const result = await getReportCVEMatches(reportId);
+      if (result.matches && result.matches.length > 0) {
+        setCveMatches(result.matches);
+        setScanned(true);
+      }
+    } catch {
+      // No existing matches
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleScan = async () => {
+    try {
+      setScanning(true);
+      setError(null);
+      const result = await matchReportCVEs(reportId);
+      setCveMatches(result.matches || []);
+      setScanned(true);
+    } catch (err: any) {
+      setError(err.message || 'Failed to scan for CVEs');
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner size="lg" text="Loading CVE data..." />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Scan Button */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">CVE Vulnerability Scan</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Match findings against known CVE vulnerabilities
+            </p>
+          </div>
+          <button
+            onClick={handleScan}
+            disabled={scanning}
+            className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {scanning ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>Scanning...</span>
+              </>
+            ) : (
+              <>
+                <Bug className="h-4 w-4" />
+                <span>{scanned ? 'Rescan for CVEs' : 'Scan for CVEs'}</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 bg-red-50 border border-red-200 rounded p-3 text-red-700 text-sm">
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* Results */}
+      {scanned && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+            CVE Matches ({cveMatches.length})
+          </h3>
+
+          {cveMatches.length === 0 ? (
+            <div className="text-center py-8">
+              <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
+              <p className="text-green-600 dark:text-green-400">No known CVEs found in this application</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {cveMatches.map((cve, idx) => (
+                <div key={idx} className="border dark:border-gray-700 rounded-lg p-4">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <a
+                        href={`https://nvd.nist.gov/vuln/detail/${cve.cve_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-lg font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                      >
+                        {cve.cve_id}
+                      </a>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{cve.description}</p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <span className={cn(
+                        "px-2 py-1 rounded text-xs font-medium",
+                        cve.severity === 'CRITICAL' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' :
+                        cve.severity === 'HIGH' ? 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200' :
+                        cve.severity === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+                        'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                      )}>
+                        {cve.severity}
+                      </span>
+                      {cve.cvss_score && (
+                        <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-xs font-mono">
+                          CVSS: {cve.cvss_score}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {cve.affected_library && (
+                    <div className="mt-2 text-sm">
+                      <span className="text-gray-500 dark:text-gray-400">Affected: </span>
+                      <span className="font-mono text-gray-900 dark:text-white">{cve.affected_library}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Not scanned yet */}
+      {!scanned && !loading && (
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-8 text-center">
+          <Bug className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <p className="text-gray-500 dark:text-gray-400">
+            Click "Scan for CVEs" to check for known vulnerabilities
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==================== Security Bypass Tab ====================
-function SecurityBypassTab({ reportId }: { reportId: number }) {
+function SecurityBypassTab({ reportId, platform }: { reportId: number; platform?: string }) {
   const [scanResult, setScanResult] = useState<SecurityScanResult | null>(null);
   const [aiConfig, setAiConfig] = useState<AIConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -755,6 +1019,29 @@ function SecurityBypassTab({ reportId }: { reportId: number }) {
   const [fridaScript, setFridaScript] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Quickstart states
+  const [quickstartType, setQuickstartType] = useState<string>('all');
+  const [quickstartScript, setQuickstartScript] = useState<string | null>(null);
+  const [quickstartLoading, setQuickstartLoading] = useState(false);
+  const [quickstartCopied, setQuickstartCopied] = useState(false);
+
+  // Ultimate Bypass states
+  const [ultimateScript, setUltimateScript] = useState<string | null>(null);
+  const [ultimateLoading, setUltimateLoading] = useState(false);
+  const [ultimateCopied, setUltimateCopied] = useState(false);
+  const [ultimateFeatures, setUltimateFeatures] = useState<string[]>([]);
+
+  // Custom Hook Modal states
+  const [showHookModal, setShowHookModal] = useState(false);
+  const [hookClassName, setHookClassName] = useState('');
+  const [hookMethodName, setHookMethodName] = useState('');
+  const [hookLogArgs, setHookLogArgs] = useState(true);
+  const [hookLogReturn, setHookLogReturn] = useState(true);
+  const [hookModifyReturn, setHookModifyReturn] = useState('');
+  const [hookScript, setHookScript] = useState<string | null>(null);
+  const [hookLoading, setHookLoading] = useState(false);
+  const [hookCopied, setHookCopied] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -812,6 +1099,110 @@ function SecurityBypassTab({ reportId }: { reportId: number }) {
     const a = document.createElement('a');
     a.href = url;
     a.download = `frida_bypass_${reportId}.js`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Quickstart script functions
+  const handleQuickstart = async () => {
+    try {
+      setQuickstartLoading(true);
+      const detectedPlatform = platform || 'android';
+      const result = await getQuickstartScript(detectedPlatform, quickstartType);
+      setQuickstartScript(result.script);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load quickstart script');
+    } finally {
+      setQuickstartLoading(false);
+    }
+  };
+
+  const copyQuickstart = async () => {
+    if (!quickstartScript) return;
+    await navigator.clipboard.writeText(quickstartScript);
+    setQuickstartCopied(true);
+    setTimeout(() => setQuickstartCopied(false), 2000);
+  };
+
+  const downloadQuickstart = () => {
+    if (!quickstartScript) return;
+    const blob = new Blob([quickstartScript], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `quickstart_${quickstartType}_${platform || 'android'}.js`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Ultimate Bypass functions
+  const handleUltimateBypass = async () => {
+    try {
+      setUltimateLoading(true);
+      const detectedPlatform = platform || 'android';
+      const result = await getUltimateBypassScript(detectedPlatform);
+      setUltimateScript(result.script);
+      setUltimateFeatures(result.features);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load ultimate bypass script');
+    } finally {
+      setUltimateLoading(false);
+    }
+  };
+
+  const copyUltimate = async () => {
+    if (!ultimateScript) return;
+    await navigator.clipboard.writeText(ultimateScript);
+    setUltimateCopied(true);
+    setTimeout(() => setUltimateCopied(false), 2000);
+  };
+
+  const downloadUltimate = () => {
+    if (!ultimateScript) return;
+    const blob = new Blob([ultimateScript], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ultimate_bypass_${platform || 'android'}.js`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Custom Hook functions
+  const handleGenerateHook = async () => {
+    if (!hookClassName || !hookMethodName) return;
+    try {
+      setHookLoading(true);
+      const result = await generateCustomHook({
+        class_name: hookClassName,
+        method_name: hookMethodName,
+        platform: platform || 'android',
+        log_arguments: hookLogArgs,
+        log_return_value: hookLogReturn,
+        modify_return: hookModifyReturn || undefined,
+      });
+      setHookScript(result.script);
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate custom hook');
+    } finally {
+      setHookLoading(false);
+    }
+  };
+
+  const copyHook = async () => {
+    if (!hookScript) return;
+    await navigator.clipboard.writeText(hookScript);
+    setHookCopied(true);
+    setTimeout(() => setHookCopied(false), 2000);
+  };
+
+  const downloadHook = () => {
+    if (!hookScript) return;
+    const blob = new Blob([hookScript], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hook_${hookClassName}_${hookMethodName}.js`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1040,6 +1431,292 @@ function SecurityBypassTab({ reportId }: { reportId: number }) {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Quickstart Scripts */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+          <Zap className="w-5 h-5 text-yellow-500" />
+          Quickstart Bypass Scripts
+        </h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          Ready-to-use Frida scripts for common bypass scenarios. No AI required.
+        </p>
+
+        <div className="flex items-center gap-4 mb-4">
+          <select
+            value={quickstartType}
+            onChange={(e) => setQuickstartType(e.target.value)}
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+          >
+            <option value="all">All Bypasses (Master Script)</option>
+            <option value="root">Root Detection Only</option>
+            <option value="ssl">SSL Pinning Only</option>
+            <option value="emulator">Emulator Detection Only</option>
+            <option value="flutter">Flutter SSL Bypass</option>
+          </select>
+
+          <button
+            onClick={handleQuickstart}
+            disabled={quickstartLoading}
+            className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50"
+          >
+            {quickstartLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Play className="w-4 h-4" />
+            )}
+            <span>Get Script</span>
+          </button>
+        </div>
+
+        {quickstartScript && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium text-gray-700 dark:text-gray-300">Quickstart Script</h4>
+              <div className="flex gap-2">
+                <button
+                  onClick={copyQuickstart}
+                  className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white rounded flex items-center gap-1"
+                >
+                  <Copy className="w-4 h-4" />
+                  {quickstartCopied ? 'Copied!' : 'Copy'}
+                </button>
+                <button
+                  onClick={downloadQuickstart}
+                  className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white rounded flex items-center gap-1"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </button>
+              </div>
+            </div>
+            <pre className="bg-gray-900 text-green-400 font-mono text-sm p-4 rounded-lg overflow-x-auto max-h-[400px] overflow-y-auto">
+              {quickstartScript}
+            </pre>
+            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              <Terminal className="w-3 h-3 inline mr-1" />
+              Usage: frida -U -f [package.name] -l script.js --no-pause
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Ultimate Bypass Script */}
+      <div className="bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border border-red-200 dark:border-red-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+          <Rocket className="w-5 h-5 text-red-500" />
+          Ultimate Bypass Script
+        </h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          The ultimate bypass script combines ALL available bypass techniques into one mega-script.
+          Includes root detection, SSL pinning, emulator detection, anti-tampering, and more.
+        </p>
+
+        <button
+          onClick={handleUltimateBypass}
+          disabled={ultimateLoading}
+          className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-lg hover:from-red-700 hover:to-orange-700 disabled:opacity-50 font-semibold shadow-lg"
+        >
+          {ultimateLoading ? (
+            <Loader2 className="w-5 h-5 animate-spin" />
+          ) : (
+            <Rocket className="w-5 h-5" />
+          )}
+          <span>Generate Ultimate Bypass</span>
+        </button>
+
+        {ultimateScript && (
+          <div className="mt-4">
+            {ultimateFeatures.length > 0 && (
+              <div className="mb-4 p-3 bg-white dark:bg-gray-800 rounded border">
+                <h4 className="font-medium text-gray-700 dark:text-gray-300 mb-2">Included Features:</h4>
+                <div className="flex flex-wrap gap-2">
+                  {ultimateFeatures.map((feature, idx) => (
+                    <span key={idx} className="px-2 py-1 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded text-xs">
+                      {feature}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium text-gray-700 dark:text-gray-300">Ultimate Script</h4>
+              <div className="flex gap-2">
+                <button
+                  onClick={copyUltimate}
+                  className="px-3 py-1.5 text-sm bg-white dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 dark:text-white rounded flex items-center gap-1 border"
+                >
+                  <Copy className="w-4 h-4" />
+                  {ultimateCopied ? 'Copied!' : 'Copy'}
+                </button>
+                <button
+                  onClick={downloadUltimate}
+                  className="px-3 py-1.5 text-sm bg-white dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 dark:text-white rounded flex items-center gap-1 border"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </button>
+              </div>
+            </div>
+            <pre className="bg-gray-900 text-green-400 font-mono text-sm p-4 rounded-lg overflow-x-auto max-h-[400px] overflow-y-auto">
+              {ultimateScript}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {/* Custom Hook Generator */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+          <Settings className="w-5 h-5 text-blue-500" />
+          Custom Hook Generator
+        </h3>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          Generate a custom Frida hook for any class/method. Perfect for tracing specific functions.
+        </p>
+
+        <button
+          onClick={() => setShowHookModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          <Settings className="w-4 h-4" />
+          <span>Open Hook Generator</span>
+        </button>
+
+        {hookScript && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium text-gray-700 dark:text-gray-300">
+                Hook: {hookClassName}.{hookMethodName}
+              </h4>
+              <div className="flex gap-2">
+                <button
+                  onClick={copyHook}
+                  className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white rounded flex items-center gap-1"
+                >
+                  <Copy className="w-4 h-4" />
+                  {hookCopied ? 'Copied!' : 'Copy'}
+                </button>
+                <button
+                  onClick={downloadHook}
+                  className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white rounded flex items-center gap-1"
+                >
+                  <Download className="w-4 h-4" />
+                  Download
+                </button>
+              </div>
+            </div>
+            <pre className="bg-gray-900 text-green-400 font-mono text-sm p-4 rounded-lg overflow-x-auto max-h-[300px] overflow-y-auto">
+              {hookScript}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {/* Custom Hook Modal */}
+      {showHookModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Custom Hook Generator</h3>
+              <button
+                onClick={() => setShowHookModal(false)}
+                className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Class Name *
+                </label>
+                <input
+                  type="text"
+                  value={hookClassName}
+                  onChange={(e) => setHookClassName(e.target.value)}
+                  placeholder="com.example.app.SecurityManager"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Method Name *
+                </label>
+                <input
+                  type="text"
+                  value={hookMethodName}
+                  onChange={(e) => setHookMethodName(e.target.value)}
+                  placeholder="checkRoot"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                />
+              </div>
+
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hookLogArgs}
+                    onChange={(e) => setHookLogArgs(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">Log Arguments</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hookLogReturn}
+                    onChange={(e) => setHookLogReturn(e.target.checked)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-300">Log Return Value</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Modify Return Value (optional)
+                </label>
+                <input
+                  type="text"
+                  value={hookModifyReturn}
+                  onChange={(e) => setHookModifyReturn(e.target.value)}
+                  placeholder="true, false, null, etc."
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400"
+                />
+                <p className="mt-1 text-xs text-gray-500">Leave empty to not modify the return value</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 p-4 border-t dark:border-gray-700">
+              <button
+                onClick={() => setShowHookModal(false)}
+                className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  handleGenerateHook();
+                  setShowHookModal(false);
+                }}
+                disabled={!hookClassName || !hookMethodName || hookLoading}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {hookLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Code className="w-4 h-4" />
+                )}
+                Generate Hook
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

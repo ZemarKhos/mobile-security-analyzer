@@ -9,28 +9,89 @@ import type {
   FindingsSummary,
   UploadResponse,
   HealthResponse,
+  AuthTokens,
+  User,
+  LoginRequest,
+  RegisterRequest,
+  ReportComparison,
+  CVEMatch,
+  CVESearchResult,
+  ReportCVEMatches,
+  AppConfig,
 } from '@/types/api';
 
 const API_BASE = '/api';
 
-class ApiError extends Error {
+// Token storage
+let accessToken: string | null = localStorage.getItem('access_token');
+let refreshToken: string | null = localStorage.getItem('refresh_token');
+
+export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
+// Token management
+export function setTokens(access: string, refresh: string) {
+  accessToken = access;
+  refreshToken = refresh;
+  localStorage.setItem('access_token', access);
+  localStorage.setItem('refresh_token', refresh);
+}
+
+export function clearTokens() {
+  accessToken = null;
+  refreshToken = null;
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+}
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+export function isAuthenticated(): boolean {
+  return !!accessToken;
+}
+
 async function fetchApi<T>(
   endpoint: string,
-  options?: RequestInit
+  options?: RequestInit,
+  skipAuth = false
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string>),
+  };
+
+  // Add auth header if we have a token
+  if (accessToken && !skipAuth) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+    headers,
   });
+
+  // Handle 401 - try to refresh token
+  if (response.status === 401 && refreshToken && !endpoint.includes('/auth/')) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      // Retry the request with new token
+      headers['Authorization'] = `Bearer ${accessToken}`;
+      const retryResponse = await fetch(`${API_BASE}${endpoint}`, {
+        ...options,
+        headers,
+      });
+      if (retryResponse.ok) {
+        return retryResponse.json();
+      }
+    }
+    clearTokens();
+  }
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
@@ -38,6 +99,27 @@ async function fetchApi<T>(
   }
 
   return response.json();
+}
+
+async function tryRefreshToken(): Promise<boolean> {
+  if (!refreshToken) return false;
+
+  try {
+    const response = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (response.ok) {
+      const data: AuthTokens = await response.json();
+      setTokens(data.access_token, data.refresh_token);
+      return true;
+    }
+  } catch {
+    // Refresh failed
+  }
+  return false;
 }
 
 // Health Check
@@ -318,4 +400,254 @@ export async function seedDefaultRules(): Promise<{ message: string; seeded: num
 // Get rule categories
 export async function getRuleCategories(): Promise<{ categories: Record<RuleType, string[]> }> {
   return fetchApi<{ categories: Record<RuleType, string[]> }>('/rules/categories/list');
+}
+
+// ============================================
+// Authentication API
+// ============================================
+
+// Register new user
+export async function register(data: RegisterRequest): Promise<AuthTokens> {
+  const response = await fetchApi<AuthTokens>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }, true);
+  setTokens(response.access_token, response.refresh_token);
+  return response;
+}
+
+// Login
+export async function login(data: LoginRequest): Promise<AuthTokens> {
+  const response = await fetchApi<AuthTokens>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }, true);
+  setTokens(response.access_token, response.refresh_token);
+  return response;
+}
+
+// Logout
+export async function logout(): Promise<void> {
+  try {
+    await fetchApi('/auth/logout', { method: 'POST' });
+  } finally {
+    clearTokens();
+  }
+}
+
+// Get current user
+export async function getCurrentUser(): Promise<User> {
+  return fetchApi<User>('/auth/me');
+}
+
+// Change password
+export async function changePassword(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+  return fetchApi<{ message: string }>('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+// List users (admin only)
+export async function listUsers(limit = 100, offset = 0): Promise<User[]> {
+  return fetchApi<User[]>(`/auth/users?limit=${limit}&offset=${offset}`);
+}
+
+// Update user role (admin only)
+export async function updateUserRole(userId: number, role: string): Promise<{ message: string }> {
+  return fetchApi<{ message: string }>(`/auth/users/${userId}/role?role=${role}`, {
+    method: 'PUT',
+  });
+}
+
+// Toggle user active status (admin only)
+export async function toggleUserActive(userId: number): Promise<{ message: string; is_active: boolean }> {
+  return fetchApi<{ message: string; is_active: boolean }>(`/auth/users/${userId}/toggle-active`, {
+    method: 'POST',
+  });
+}
+
+// ============================================
+// Export API
+// ============================================
+
+// Export report to PDF
+export function getExportPdfUrl(reportId: number): string {
+  return `${API_BASE}/export/reports/${reportId}/pdf`;
+}
+
+// Export findings to CSV
+export function getExportCsvUrl(reportId: number): string {
+  return `${API_BASE}/export/reports/${reportId}/csv`;
+}
+
+// Export report to JSON
+export function getExportJsonUrl(reportId: number): string {
+  return `${API_BASE}/export/reports/${reportId}/json`;
+}
+
+// Download export with auth
+export async function downloadExport(url: string, filename: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (accessToken) {
+    headers['Authorization'] = `Bearer ${accessToken}`;
+  }
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new ApiError(response.status, 'Export failed');
+  }
+
+  const blob = await response.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(downloadUrl);
+  document.body.removeChild(a);
+}
+
+// ============================================
+// CVE API
+// ============================================
+
+// Search CVEs
+export async function searchCVEs(keyword: string, limit = 20): Promise<{ keyword: string; count: number; results: CVESearchResult[] }> {
+  return fetchApi(`/cve/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`);
+}
+
+// Get CVE details
+export async function getCVEDetails(cveId: string): Promise<CVESearchResult> {
+  return fetchApi(`/cve/details/${cveId}`);
+}
+
+// Match report findings to CVEs
+export async function matchReportCVEs(reportId: number): Promise<{ report_id: number; findings_analyzed: number; matches_found: number; matches: CVEMatch[] }> {
+  return fetchApi(`/cve/reports/${reportId}/match`, { method: 'POST' });
+}
+
+// Get report CVE matches
+export async function getReportCVEMatches(reportId: number): Promise<ReportCVEMatches> {
+  return fetchApi(`/cve/reports/${reportId}/matches`);
+}
+
+// Get known library CVEs
+export async function getKnownLibraryCVEs(): Promise<{ total_libraries: number; total_cves: number; libraries: { library: string; cve_count: number; cves: CVEMatch[] }[] }> {
+  return fetchApi('/cve/known-libraries');
+}
+
+// ============================================
+// Report Comparison API
+// ============================================
+
+// Compare two reports
+export async function compareReports(baselineId: number, comparedId: number): Promise<ReportComparison> {
+  return fetchApi('/compare', {
+    method: 'POST',
+    body: JSON.stringify({ baseline_report_id: baselineId, compared_report_id: comparedId }),
+  });
+}
+
+// Find similar reports for comparison
+export async function findSimilarReports(reportId: number): Promise<{ report_id: number; package_name: string; similar_reports: { id: number; app_name: string; version_name: string; status: string; risk_score: number; created_at: string }[] }> {
+  return fetchApi(`/compare/reports/${reportId}/similar`);
+}
+
+// Quick comparison
+export async function quickCompare(baselineId: number, comparedId: number): Promise<{ baseline: { id: number; version: string; risk_score: number; total_findings: number }; compared: { id: number; version: string; risk_score: number; total_findings: number }; risk_score_change: number; findings_change: number; trend: string }> {
+  return fetchApi(`/compare/quick?baseline_id=${baselineId}&compared_id=${comparedId}`);
+}
+
+// ============================================
+// Config API
+// ============================================
+
+// Get app config
+export async function getAppConfig(): Promise<AppConfig> {
+  return fetchApi('/config');
+}
+
+// ============================================
+// DAST/Frida API
+// ============================================
+
+import type { FridaTemplate, GeneratedScript, CustomHookRequest } from '@/types/api';
+
+// Get all Frida templates
+export async function getFridaTemplates(category?: string, platform?: string): Promise<FridaTemplate[]> {
+  const params = new URLSearchParams();
+  if (category) params.append('category', category);
+  if (platform) params.append('platform', platform);
+  const query = params.toString();
+  return fetchApi(`/dast/templates${query ? `?${query}` : ''}`);
+}
+
+// Get specific template with script
+export async function getFridaTemplate(templateId: string): Promise<FridaTemplate> {
+  return fetchApi(`/dast/templates/${templateId}`);
+}
+
+// Get template categories
+export async function getFridaCategories(): Promise<{ categories: { id: string; name: string; count: number }[] }> {
+  return fetchApi('/dast/templates/categories/list');
+}
+
+// Combine multiple templates
+export async function combineFridaTemplates(templateIds: string[]): Promise<{ templates_used: string[]; script: string }> {
+  return fetchApi('/dast/templates/combine', {
+    method: 'POST',
+    body: JSON.stringify({ template_ids: templateIds }),
+  });
+}
+
+// Generate bypass script for report
+export async function generateBypassScript(reportId: number): Promise<GeneratedScript> {
+  return fetchApi(`/dast/generate/${reportId}`, { method: 'POST' });
+}
+
+// Generate custom hook
+export async function generateCustomHook(request: CustomHookRequest): Promise<{ class_name: string; method_name: string; platform: string; script: string }> {
+  return fetchApi('/dast/hooks/generate', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+// Get crypto trace script
+export async function getCryptoTraceScript(platform: string): Promise<{ platform: string; description: string; script: string }> {
+  return fetchApi(`/dast/trace/crypto/${platform}`);
+}
+
+// Get network trace script
+export async function getNetworkTraceScript(platform: string): Promise<{ platform: string; description: string; script: string }> {
+  return fetchApi(`/dast/trace/network/${platform}`);
+}
+
+// Get quickstart script
+export async function getQuickstartScript(platform: string, bypassType: string = 'all'): Promise<{
+  platform: string;
+  bypass_type: string;
+  template_name: string;
+  description: string;
+  script: string;
+  usage: string;
+  tips: string[];
+}> {
+  return fetchApi(`/dast/quickstart/${platform}?bypass_type=${bypassType}`);
+}
+
+// Get ultimate bypass script (all bypasses combined)
+export async function getUltimateBypassScript(platform: string): Promise<{
+  platform: string;
+  name: string;
+  description: string;
+  templates_included: string[];
+  features: string[];
+  script: string;
+  usage: string;
+  warnings: string[];
+}> {
+  return fetchApi(`/dast/ultimate/${platform}`);
 }

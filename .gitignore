@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.installer-venv/
 .env
 
 # Build outputs

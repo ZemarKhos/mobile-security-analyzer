@@ -1,0 +1,34 @@
+[Unit]
+Description=MobAI Frontend - Mobile Security Analyzer Web UI
+Documentation=https://github.com/UmutBarisBASAK/mobile-security-analyzer
+After=network.target mobai-backend.service
+Wants=mobai-backend.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/mobai/frontend
+
+# Node.js path
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+# Production modunda serve veya nginx kullanin
+# Development modunda:
+ExecStart=/usr/bin/npm run preview -- --port 3000
+
+# Restart politikasi
+Restart=always
+RestartSec=5
+
+# Guvenlik ayarlari
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Loglama
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mobai-frontend
+
+[Install]
+WantedBy=multi-user.target

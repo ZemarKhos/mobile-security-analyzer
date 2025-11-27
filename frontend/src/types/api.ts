@@ -253,3 +253,183 @@ export interface RuleUpdate {
   bypass_difficulty?: 'easy' | 'medium' | 'hard';
   platform?: 'android' | 'ios' | 'both';
 }
+
+// Authentication Types
+export type UserRole = 'admin' | 'analyst' | 'viewer';
+
+export interface User {
+  id: number;
+  username: string;
+  email: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  last_login?: string;
+}
+
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+  user: User;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  username: string;
+  email: string;
+  password: string;
+}
+
+// CVE Types
+export interface CVEMatch {
+  finding_id?: number;
+  finding_title?: string;
+  cve_id: string;
+  description?: string;
+  cve_description?: string;
+  cve_category?: string;
+  severity: string;
+  cvss_score?: number;
+  match_type?: string;
+  match_confidence?: string;
+  recommendation?: string;
+  note?: string;
+  affected_library?: string;
+}
+
+export interface CVESearchResult {
+  cve_id: string;
+  description: string;
+  severity: string;
+  cvss_score?: number;
+  cvss_vector?: string;
+  published?: string;
+  lastModified?: string;
+}
+
+export interface ReportCVEMatches {
+  report_id: number;
+  total_matches: number;
+  severity_breakdown: Record<string, number>;
+  matches: CVEMatch[];
+}
+
+// Report Comparison Types
+export interface ComparisonSummary {
+  new_findings_count: number;
+  fixed_findings_count: number;
+  unchanged_findings_count: number;
+  permissions_added: number;
+  permissions_removed: number;
+  security_flag_changes: number;
+  risk_score_change: number;
+}
+
+export interface SecurityTrend {
+  trend: 'significantly_improved' | 'improved' | 'unchanged' | 'degraded' | 'significantly_degraded';
+  description: string;
+  risk_score_change: number;
+  old_risk_score: number;
+  new_risk_score: number;
+}
+
+export interface ReportComparison {
+  metadata: {
+    baseline_report: {
+      id: number;
+      app_name: string;
+      version?: string;
+      package_name: string;
+      platform: Platform;
+      analyzed_at: string;
+      risk_score: number;
+    };
+    compared_report: {
+      id: number;
+      app_name: string;
+      version?: string;
+      package_name: string;
+      platform: Platform;
+      analyzed_at: string;
+      risk_score: number;
+    };
+    comparison_date: string;
+  };
+  security_trend: SecurityTrend;
+  findings_comparison: {
+    new: Finding[];
+    fixed: Finding[];
+    unchanged: Finding[];
+  };
+  severity_comparison: Record<string, {
+    old: number;
+    new: number;
+    difference: number;
+    change: string;
+  }>;
+  permissions_comparison: {
+    added: string[];
+    removed: string[];
+    unchanged_count: number;
+  };
+  summary: ComparisonSummary;
+}
+
+// Config Types
+export interface AppConfig {
+  max_file_size_mb: number;
+  supported_formats: string[];
+  version: string;
+  features: {
+    authentication: boolean;
+    pdf_export: boolean;
+    csv_export: boolean;
+    cve_matching: boolean;
+    report_comparison: boolean;
+    ai_integration: boolean;
+  };
+}
+
+// DAST/Frida Types
+export interface FridaTemplate {
+  id: string;
+  name: string;
+  category: string;
+  platform: string;
+  description: string;
+  targets: string[];
+  difficulty: string;
+  script?: string;
+}
+
+export interface GeneratedScript {
+  report_id: number;
+  platform: string;
+  app_name: string;
+  templates_used: string[];
+  detection_summary: {
+    root_detection: number;
+    ssl_pinning: number;
+    jailbreak: number;
+  };
+  script: string;
+  usage: {
+    android: string;
+    ios: string;
+  };
+}
+
+export interface CustomHookRequest {
+  class_name: string;
+  method_name: string;
+  platform: string;
+  log_arguments: boolean;
+  log_return_value: boolean;
+  modify_return?: string;
+}

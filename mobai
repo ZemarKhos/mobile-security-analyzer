@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# MobAI - Mobile Security Analyzer
+# Shell Wrapper Script
+#
+# Bu script install.py'yi calistirir.
+# Kullanim: ./mobai [komut] [secenekler]
+#
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_SCRIPT="$SCRIPT_DIR/install.py"
+INSTALLER_VENV="$SCRIPT_DIR/.installer-venv"
+
+# Installer venv kontrolu
+if [ -d "$INSTALLER_VENV" ] && [ -f "$INSTALLER_VENV/bin/python" ]; then
+    # Installer venv ile calistir
+    exec "$INSTALLER_VENV/bin/python" "$INSTALL_SCRIPT" "$@"
+else
+    # Sistem Python ile calistir
+    if command -v python3 &> /dev/null; then
+        PYTHON_CMD="python3"
+    elif command -v python &> /dev/null; then
+        PYTHON_CMD="python"
+    else
+        echo "HATA: Python bulunamadi!"
+        echo "Python kurmak icin: sudo apt install python3"
+        exit 1
+    fi
+
+    # Rich kurulu mu kontrol et
+    if ! $PYTHON_CMD -c "import rich" &> /dev/null; then
+        echo "UYARI: Rich kutuphanesi bulunamadi."
+        echo "Tam ozellikleri aktive etmek icin:"
+        echo "  ./scripts/bootstrap.sh"
+        echo ""
+        echo "Basit modda devam ediliyor..."
+        echo ""
+    fi
+
+    exec $PYTHON_CMD "$INSTALL_SCRIPT" "$@"
+fi
